@@ -6450,7 +6450,7 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
     #endif
 
     #ifdef GGML_CUDA_FA_QUANTS
-        features.push_back({ "FA_QUANTS", GGML_CUDA_FA_QUANTS });
+        features.push_back({ "FA_QUANTS", STRINGIFY(GGML_CUDA_FA_QUANTS) });
     #endif
 
     {
