@@ -2064,6 +2064,26 @@ static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml
         compute_type = GGML_TYPE_F32;
     }
 
+    // [TAG_GGML_PREC] an F32 request on src1 is met only by an F32 GEMM without TF32: the handle's math mode is
+    // CUBLAS_TF32_TENSOR_OP_MATH (common.cuh), which rounds both operands to a 10-bit mantissa. Strict for this call only.
+    const bool strict_f32 = ggml_prec_get_src(dst, 1) == GGML_PREC_F32;
+    if (strict_f32) {
+        compute_type = GGML_TYPE_F32;
+    }
+    struct strict_f32_math {
+        cublasHandle_t h;
+        explicit strict_f32_math(cublasHandle_t h) : h(h) {
+            if (h) {
+                CUBLAS_CHECK(cublasSetMathMode(h, CUBLAS_DEFAULT_MATH));
+            }
+        }
+        ~strict_f32_math() {
+            if (h) {
+                CUBLAS_CHECK(cublasSetMathMode(h, CUBLAS_TF32_TENSOR_OP_MATH));
+            }
+        }
+    } strict_math(strict_f32 ? ctx.cublas_handle() : nullptr);
+
     const char * env_c = getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE");
     if (env_c != nullptr) {
         std::string env_cpp = env_c;
@@ -2483,7 +2503,9 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         ggml_cuda_mul_mat_vec_f(ctx, src1, src0, nullptr, &dst_vec);
         return;
     }
-    if (ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, ne11, /*mul_mat_id =*/ false)) {
+    // [TAG_GGML_PREC] the mma kernels compute F32 in TF32: not for an F32 request on src1
+    if (ggml_prec_get_src(dst, 1) != GGML_PREC_F32 &&
+            ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, ne11, /*mul_mat_id =*/ false)) {
         ggml_cuda_mul_mat_f(ctx, src0, src1, nullptr, dst);
         return;
     }
@@ -6269,7 +6291,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     return false;
                 }
                 const int cc_dev = ggml_cuda_info().devices[dev_ctx->device].cc;
-                const bool f32_src1_ok = GGML_CUDA_CC_IS_NVIDIA(cc_dev) && cc_dev < GGML_CUDA_CC_AMPERE;
+                // on NVIDIA an F32 request on src1 of a MUL_MAT is met by cuBLAS in its default math mode, with or
+                // without tensor cores (ggml_cuda_mul_mat_cublas)
+                const bool f32_src1_ok = GGML_CUDA_CC_IS_NVIDIA(cc_dev) && (cc_dev < GGML_CUDA_CC_AMPERE || op->op == GGML_OP_MUL_MAT);
                 const enum ggml_prec prec_src1 = ggml_prec_get_src(op, 1);
                 const bool fp8_id_mmvf = op->op == GGML_OP_MUL_MAT_ID &&
                     a->type == GGML_TYPE_F8_E4M3 && b->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
