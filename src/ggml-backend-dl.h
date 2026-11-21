@@ -6,7 +6,6 @@
 #       define NOMINMAX
 #   endif
 #   include <windows.h>
-#   include <winevt.h>
 #else
 #    include <dlfcn.h>
 #    include <unistd.h>
